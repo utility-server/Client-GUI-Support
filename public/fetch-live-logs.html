@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live Logs</title>
+    <script src="/socket.io/socket.io.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #f4f4f9;
+            color: #333;
+            display: flex;
+            flex-direction: column;
+            min-height: 100vh;
+        }
+        h1 {
+            background-color: #007BFF;
+            color: white;
+            padding: 10px;
+            text-align: center;
+        }
+        .progress-container {
+            background-color: #f8f9fa;
+            padding: 10px;
+            text-align: center;
+            font-weight: bold;
+            font-family: monospace;
+            flex-shrink: 0;
+            border-bottom: 1px solid #ddd;
+        }
+        .log-container {
+            overflow-y: auto;
+            max-height: 80vh;
+            margin: 0;
+            flex-grow: 1;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        table, th, td {
+            border: 1px solid #ddd;
+        }
+        th, td {
+            padding: 10px;
+            text-align: left;
+        }
+        th {
+            background-color: #007BFF;
+            color: white;
+            position: sticky;
+            top: 0;
+            z-index: 1;
+        }
+        tbody tr:nth-child(even) {
+            background-color: #f2f2f2;
+        }
+        tbody tr:hover {
+            background-color: #ddd;
+        }
+        .progress-container {
+            background-color: #007BFF; /* Match h1 background color */
+            color: white; /* White text for contrast */
+            padding: 20px;
+            text-align: center;
+            font-weight: bold;
+            font-family: Arial, sans-serif;
+            font-size: 45px; /* Adjust font size */
+            border-bottom: 1px solid #0056b3; /* Slightly darker border for separation */
+        }
+    </style>
+</head>
+<body>
+    <!-- Progress Indicator -->
+    <div class="progress-container" id="progressContainer">
+        Waiting for updates...
+    </div>
+
+    <!-- Log Table -->
+    <div class="log-container" id="logContainer">
+        <table>
+            <thead>
+                <tr>
+                    <th>Timestamp</th>
+                    <th>Execution Time</th>
+                    <th>URL</th>
+                    <th>User Agent</th>
+                    <th>Length</th>
+                    <th>Improvised</th>
+                    <th>SEO</th>
+                    <th>PS Source</th>
+                    <th>Source</th>
+                    <th>Exp Timestamp</th>
+                </tr>
+            </thead>
+            <tbody id="logTableBody">
+            </tbody>
+        </table>
+    </div>
+
+    <script>
+        const socket = io(); // Connect to the WebSocket server
+        const logTableBody = document.getElementById('logTableBody');
+        const logContainer = document.getElementById('logContainer');
+        const progressContainer = document.getElementById('progressContainer');
+
+        let clientId = ""; // Store the extracted client ID
+
+        // Fixed header keys in the expected order
+        const fixedHeaders = [
+            "Timestamp",
+            "Execution Time",
+            "URL",
+            "User Agent",
+            "Length",
+            "Improvised",
+            "SEO",
+            "PS Source",
+            "Source",
+            "Exp Timestamp"
+        ];
+
+        // Parse log into a table row
+        function parseLogToRow(log) {
+            const logParts = log.match(/\[(.+?)\]/g); // Match all fields inside square brackets
+            const fields = logParts ? logParts.map(part => part.slice(1, -1)) : [];
+
+            // Determine the pattern based on the number of fields
+            if (fields.length === 10) {
+                // Full pattern
+                return fields;
+            } else if (fields.length === 7) {
+                // Pattern missing "Improvised", "SEO", and "PS Source"
+                return [...fields.slice(0, 5), "-", "-", "-", ...fields.slice(5)];
+            } else if (fields.length === 6) {
+                // Pattern missing "Length", "Improvised", "SEO", and "PS Source"
+                return [...fields.slice(0, 4), "-", "-", "-", "-", ...fields.slice(4)];
+            }
+            // Skip logs that don't match any pattern
+            return null;
+        }
+
+        // Function to format and convert timestamps to local time
+        function formatData(value, index) {
+            if (index === 0 || index === 9) {
+                const date = new Date(value);
+                if (isNaN(date)) return value; // Return original if invalid timestamp
+
+                const options = {
+                    year: 'numeric',
+                    month: 'short',
+                    day: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit',
+                    hour12: false,
+                };
+                return date.toLocaleString(undefined, options); // Format based on the user's locale
+            } else if (index === 8) {
+                return (value == "false") ? "Origin" : value;
+            }  else if (index === 5) {
+                return (value == "false") ? "No" : (value == "true") ? "Yes" : value;
+            } else {
+                return value;
+            }
+        }
+
+        // Generate a table row from log data
+        function generateTableRow(fields) {
+            return fields
+                .map((value, index) => {
+                    // Handle null/undefined and mixed cases
+                    if (value.includes("/")) {
+                        return `<td>${formatData(value, index)
+                            .split("/")
+                            .map(val => (val.trim() === "undefined" || val.trim() === "null" || val.trim() === "-1" || val.trim() === "" ? "-" : val))
+                            .join("/")}</td>`;
+                    }
+                    return `<td>${value.trim() === "undefined" || value.trim() === "null" || value.trim() === "-1" || value.trim() === "" ? "-" : formatData(value, index)}</td>`;
+                })
+                .join("");
+        }
+
+        // Check if the user is near the bottom of the log container
+        function isNearBottom() {
+            return logContainer.scrollTop + logContainer.clientHeight >= logContainer.scrollHeight - 10;
+        }
+
+        // Listen for clientId message
+        socket.on('clientId', (id) => {
+            clientId = id; // Store the client ID
+            progressContainer.textContent = `[${clientId}] Waiting for updates...`; // Update progress container
+        });
+
+        // Listen for log messages
+        socket.on('log', (data) => {
+            const { log, clientId } = data;
+
+            // Display progress lines in the progress container
+            if (log.includes("Ctrl+C to exit")) {
+                const progressLine = log.replace("Ctrl+C to exit", "").trim();
+                progressContainer.textContent = `[${clientId}] Fetching live logs: ${progressLine}`;
+                return;
+            }
+
+            // Ignore logs containing "DEBUG"
+            if (log.includes("[DEBUG]")) return;
+
+            // Parse and display logs in the table
+            const fields = parseLogToRow(log);
+            if (!fields) return;
+
+            const row = document.createElement('tr');
+            row.innerHTML = generateTableRow(fields);
+            logTableBody.appendChild(row);
+
+            // Auto-scroll to the bottom if needed
+            if (isNearBottom()) {
+                logContainer.scrollTop = logContainer.scrollHeight;
+            }
+        });
+
+        // Fallback for showing "Waiting for updates..." if no progress received for a while
+        let progressTimeout;
+        function resetProgressTimeout() {
+            clearTimeout(progressTimeout);
+            progressTimeout = setTimeout(() => {
+                progressContainer.textContent = `[${clientId || '-'}] Waiting for updates...`;
+            }, 3000); // Reset progress to "Waiting for updates..." after 3 seconds of no updates
+        }
+
+        socket.on("log", () => {
+            resetProgressTimeout();
+        });
+    </script>
+</body>
+</html>
